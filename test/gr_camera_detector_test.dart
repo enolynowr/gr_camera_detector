@@ -439,6 +439,278 @@ void main() {
       expect(result.isGrCamera, isFalse);
     });
   });
+
+  group('error handling', () {
+    test('returns error result for empty bytes', () async {
+      final result = await detector.detectFromBytes(Uint8List(0));
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.hasError, isTrue);
+      expect(result.error, isA<InvalidImageDataException>());
+      expect(result.status, DetectionStatus.invalidInput);
+    });
+
+    test('returns error result for invalid bytes without filename', () async {
+      final result = await detector.detectFromBytes(
+        Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]),
+      );
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.hasError, isTrue);
+      expect(result.status, anyOf(
+        DetectionStatus.exifError,
+        DetectionStatus.noExifData,
+      ));
+    });
+
+    test('returns fallback result with error for invalid bytes with GR filename',
+        () async {
+      final result = await detector.detectFromBytes(
+        Uint8List.fromList([0, 1, 2, 3]),
+        filename: 'R0001234.JPG',
+      );
+
+      expect(result.isGrCamera, isTrue);
+      expect(result.method, DetectionMethod.filename);
+      expect(result.usedFallback, isTrue);
+      expect(result.hasError, isTrue);
+    });
+
+    test('returns fallback result with error for invalid bytes with non-GR filename',
+        () async {
+      final result = await detector.detectFromBytes(
+        Uint8List.fromList([0, 1, 2, 3]),
+        filename: 'IMG_1234.JPG',
+      );
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.usedFallback, isTrue);
+      expect(result.hasError, isTrue);
+      // Could be exifError or noExifData depending on how exif library handles invalid bytes
+      expect(result.status, anyOf(
+        DetectionStatus.exifError,
+        DetectionStatus.noExifData,
+      ));
+    });
+
+    test('calls onError callback when error occurs', () async {
+      GrDetectionException? capturedError;
+      final detectorWithCallback = GrCameraDetector(GrDetectorConfig(
+        onError: (e) => capturedError = e,
+      ));
+
+      await detectorWithCallback.detectFromBytes(Uint8List.fromList([0, 1, 2]));
+
+      expect(capturedError, isNotNull);
+    });
+
+    test('throws exception when throwOnError is true', () async {
+      final strictDetector = GrCameraDetector(GrDetectorConfig.strict);
+
+      expect(
+        () => strictDetector.detectFromBytes(Uint8List(0)),
+        throwsA(isA<GrDetectionException>()),
+      );
+    });
+
+    test('does not use fallback when enableFallback is false', () async {
+      final noFallbackDetector = GrCameraDetector(GrDetectorConfig(
+        enableFallback: false,
+      ));
+
+      final result = await noFallbackDetector.detectFromBytes(
+        Uint8List.fromList([0, 1, 2, 3]),
+        filename: 'R0001234.JPG',
+      );
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.usedFallback, isFalse);
+      expect(result.hasError, isTrue);
+    });
+
+    test('GrDetectionException is thrown in strict mode', () async {
+      final strictDetector = GrCameraDetector(GrDetectorConfig.strict);
+
+      try {
+        await strictDetector.detectFromBytes(Uint8List.fromList([0, 1, 2, 3]));
+        fail('Expected exception to be thrown');
+      } on ExifParsingException catch (e) {
+        // If bytes cause EXIF parsing to throw
+        expect(e.message, isNotEmpty);
+        expect(e.bytesPreview, isNotNull);
+      } on NoExifDataException catch (e) {
+        // If bytes cause EXIF to return empty (not throw)
+        expect(e.message, isNotEmpty);
+      }
+    });
+
+    test('ExifParsingException preserves error details', () {
+      // Test the exception structure directly
+      const cause = FormatException('test');
+      final trace = StackTrace.current;
+      final error = ExifParsingException(
+        'Test error',
+        cause: cause,
+        stackTrace: trace,
+        bytesPreview: [0xFF, 0xD8, 0xFF, 0xE0],
+      );
+
+      expect(error.message, 'Test error');
+      expect(error.cause, cause);
+      expect(error.stackTrace, trace);
+      expect(error.bytesPreview, hasLength(4));
+      expect(error.toString(), contains('ExifParsingException'));
+    });
+
+    test('InvalidImageDataException contains bytes length', () async {
+      final strictDetector = GrCameraDetector(GrDetectorConfig.strict);
+
+      try {
+        await strictDetector.detectFromBytes(Uint8List(0));
+        fail('Expected exception to be thrown');
+      } on InvalidImageDataException catch (e) {
+        expect(e.bytesLength, 0);
+        expect(e.message, contains('empty'));
+      }
+    });
+  });
+
+  group('GrDetectionResult.withError', () {
+    test('creates error result correctly', () {
+      const error = NoExifDataException('Test error');
+      final result = GrDetectionResult.withError(error);
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.hasError, isTrue);
+      expect(result.error, error);
+      expect(result.status, DetectionStatus.exifError);
+      expect(result.usedFallback, isFalse);
+    });
+
+    test('creates error result with custom status', () {
+      const error = InvalidImageDataException('Invalid', bytesLength: 0);
+      final result = GrDetectionResult.withError(
+        error,
+        status: DetectionStatus.invalidInput,
+      );
+
+      expect(result.status, DetectionStatus.invalidInput);
+    });
+  });
+
+  group('GrDetectionResult.withFallback', () {
+    test('creates fallback result for detected GR camera', () {
+      const filenameResult = GrDetectionResult(
+        isGrCamera: true,
+        method: DetectionMethod.filename,
+      );
+      const error = ExifParsingException('Test error');
+
+      final result = GrDetectionResult.withFallback(
+        filenameResult: filenameResult,
+        originalError: error,
+      );
+
+      expect(result.isGrCamera, isTrue);
+      expect(result.method, DetectionMethod.filename);
+      expect(result.usedFallback, isTrue);
+      expect(result.hasError, isTrue);
+      expect(result.error, error);
+      expect(result.status, DetectionStatus.detected);
+    });
+
+    test('creates fallback result for non-GR camera', () {
+      const filenameResult = GrDetectionResult.notDetected();
+      const error = ExifParsingException('Test error');
+
+      final result = GrDetectionResult.withFallback(
+        filenameResult: filenameResult,
+        originalError: error,
+      );
+
+      expect(result.isGrCamera, isFalse);
+      expect(result.usedFallback, isTrue);
+      expect(result.status, DetectionStatus.exifError);
+    });
+  });
+
+  group('DetectionStatus', () {
+    test('default status is detected for GR camera', () {
+      const result = GrDetectionResult(
+        isGrCamera: true,
+        method: DetectionMethod.exif,
+      );
+      expect(result.status, DetectionStatus.detected);
+    });
+
+    test('default status is notDetected for non-GR camera', () {
+      const result = GrDetectionResult(
+        isGrCamera: false,
+        method: DetectionMethod.none,
+      );
+      expect(result.status, DetectionStatus.notDetected);
+    });
+
+    test('notDetected constructor sets correct status', () {
+      const result = GrDetectionResult.notDetected();
+      expect(result.status, DetectionStatus.notDetected);
+      expect(result.hasError, isFalse);
+    });
+  });
+
+  group('GrDetectorConfig', () {
+    test('defaultConfig has expected values', () {
+      const config = GrDetectorConfig.defaultConfig;
+      expect(config.throwOnError, isFalse);
+      expect(config.enableFallback, isTrue);
+      expect(config.onError, isNull);
+    });
+
+    test('strict config has expected values', () {
+      const config = GrDetectorConfig.strict;
+      expect(config.throwOnError, isTrue);
+      expect(config.enableFallback, isFalse);
+    });
+
+    test('custom config preserves values', () {
+      var callCount = 0;
+      final config = GrDetectorConfig(
+        throwOnError: true,
+        enableFallback: false,
+        onError: (_) => callCount++,
+      );
+
+      expect(config.throwOnError, isTrue);
+      expect(config.enableFallback, isFalse);
+
+      config.onError!(const NoExifDataException());
+      expect(callCount, 1);
+    });
+  });
+
+  group('GrDetectionResult toString with error', () {
+    test('includes error in toString when present', () {
+      const error = NoExifDataException('Test');
+      final result = GrDetectionResult.withError(error);
+
+      expect(result.toString(), contains('error:'));
+    });
+
+    test('includes usedFallback in toString when true', () {
+      const filenameResult = GrDetectionResult(
+        isGrCamera: true,
+        method: DetectionMethod.filename,
+      );
+      const error = ExifParsingException('Test');
+
+      final result = GrDetectionResult.withFallback(
+        filenameResult: filenameResult,
+        originalError: error,
+      );
+
+      expect(result.toString(), contains('usedFallback: true'));
+    });
+  });
 }
 
 /// Helper to create mock EXIF data for testing.
