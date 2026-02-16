@@ -3,9 +3,9 @@ description: >-
   Detect photos taken with Ricoh GR camera series via EXIF metadata
   and filename patterns. Supports all GR models from GR DIGITAL to GR IV.
 version: 0.1.0
-homepage: https://github.com/devkimwr/gr_camera_detector
-repository: https://github.com/devkimwr/gr_camera_detector
-issue_tracker: https://github.com/devkimwr/gr_camera_detector/issues
+homepage: https://github.com/enolynowr/gr_camera_detector
+repository: https://github.com/enolynowr/gr_camera_detector
+issue_tracker: https://github.com/enolynowr/gr_camera_detector/issues
 
 environment:
   sdk: ^3.0.0

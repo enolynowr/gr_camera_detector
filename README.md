@@ -111,4 +111,4 @@ final result = await GrCameraDetector().detectFromBytes(
 - Filename detection is for reference only, as other cameras may use similar patterns.
 - This package will be updated when new GR models are released.
 - For bug reports or feature requests, please visit
-  [GitHub Issues](https://github.com/devkimwr/gr_camera_detector/issues).
+  [GitHub Issues](https://github.com/enolynowr/gr_camera_detector/issues).
